@@ -1,0 +1,13 @@
+{
+  "name": "MeilenMaxxen",
+  "short_name": "MeilenMaxxen",
+  "description": "Plan and log your runs and build your weekly mileage step by step. Works offline.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#14161a",
+  "theme_color": "#14161a",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}
