@@ -268,7 +268,7 @@ function suggestionCard(monday) {
   const step = state.settings.step;
   let text;
   if (s.kind === "start") {
-    text = `<strong>Start easy:</strong> ${s.runs.length} runs of ${km(state.settings.startKm)}. After that your week grows by just under ${state.settings.maxIncrease}% (at least ${km(step)}).`;
+    text = `<strong>Start easy:</strong> ${s.runs.length} runs of ${km(state.settings.startKm)}. After that your week grows in steps of ${km(step)}, as many as fit within ${state.settings.maxIncrease}%.`;
   } else if (s.kind === "increase") {
     const ups = s.runs.filter((r) => r.change === "up");
     const inc = round1(s.total - s.from);
@@ -476,7 +476,7 @@ function progressView() {
 // ---------- settings ----------
 
 const SETTING_FIELDS = [
-  ["step", "Smallest weekly increase (km)", "Suggestions grow your week by just under the warning limit, but at least this much.", 0.1, 10],
+  ["step", "Increase in steps of (km)", "Suggestions add steps of this size until one more would pass the warning limit. Always at least one step.", 0.1, 10],
   ["maxIncrease", "Warn above (% per week)", "Plans that grow faster than this get a warning. One weekly increase is always fine.", 1, 100],
   ["addDayEvery", "New running day every (km)", "A new day is suggested before your week reaches 10, 20, 30… km.", 2, 100],
   ["maxDays", "Most running days a week", "", 2, 7],

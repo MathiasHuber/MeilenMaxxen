@@ -31,59 +31,63 @@ test("first week: two easy runs", () => {
   assert.equal(kms(s), "2:2.5 6:2.5");
 });
 
-test("two runs grow one at a time, a day is added before 10 km with a long run", () => {
-  const log = simulate(8);
+test("two runs grow evenly in half kilometres, a day is added before 10 km with a long run", () => {
+  const log = simulate(13);
   assert.deepEqual(log.map((l) => l.runs), [
     "2:2.5 6:2.5",
-    "2:3.5 6:2.5",
+    "2:3 6:2.5",
+    "2:3 6:3",
+    "2:3.5 6:3",
     "2:3.5 6:3.5",
-    "2:4.5 6:3.5",
+    "2:4 6:3.5",
+    "2:4 6:4",
+    "2:4.5 6:4",
     "2:4.5 6:4.5",
-    "2:3 6:3 0:4L", // 9 km + 1: a third day on Sunday, the long run
-    "2:3 6:3 0:5L",
+    "2:5 6:4.5",
+    "2:3 6:3 0:4L", // 9.5 km + 0.5: a third day on Sunday, the long run
+    "2:3 6:3 0:5L", // 10 km: two steps fit within 10%
     "2:3 6:3 0:6L",
   ]);
-  assert.equal(log[5].kind, "add-day");
-  assert.deepEqual(log.map((l) => l.total), [5, 6, 7, 8, 9, 10, 11, 12]);
+  assert.equal(log[10].kind, "add-day");
 });
 
-test("weeks grow by just under 10%, but at least one step", () => {
+test("weeks grow in half kilometres up to 10%, at least one step", () => {
   const s = createState().settings;
-  assert.equal(weeklyIncrease(5, s), 1);
-  assert.equal(weeklyIncrease(13.4, s), 1.3);
-  assert.equal(weeklyIncrease(30, s), 2.9);
-  assert.equal(weeklyIncrease(31, s), 3);
+  assert.equal(weeklyIncrease(10, s), 1); // 10.5 is +5%, 11 is +10%, 11.5 would be +15%
+  assert.equal(weeklyIncrease(5, s), 0.5);
+  assert.equal(weeklyIncrease(3, s), 0.5); // less than one step fits: still one step
+  assert.equal(weeklyIncrease(13.4, s), 1);
+  assert.equal(weeklyIncrease(30, s), 3);
   const log = simulate(30);
   for (let i = 1; i < log.length; i++) {
     assert.equal(increaseCheck(log[i - 1].total, log[i].total, s).over, false, `week ${i}`);
-    assert.ok(log[i].total - log[i - 1].total >= 1 - 1e-9);
+    assert.ok(log[i].total - log[i - 1].total >= 0.5 - 1e-9);
   }
-  assert.equal(log[8].total, 13.1);
 });
 
 test("the long run takes increases up to its share, the rest evens out the other runs", () => {
-  const log = simulate(20);
-  for (const l of log.slice(6)) {
+  const log = simulate(25);
+  for (const l of log.slice(10)) {
     const long = Number(l.runs.match(/:([\d.]+)L/)[1]);
     assert.ok(long / l.total <= 0.5 + 1e-9, `${l.runs}`);
   }
-  assert.equal(log[8].runs, "2:3.5 6:3.1 0:6.5L"); // 12 km + 1.1: long run to 6.5 (half of 13.1), 0.6 to the others
+  assert.equal(log[13].runs, "2:3.5 6:3 0:6.5L"); // 12 km + 1: long run to 6.5 (half of 13), the other step to the shortest run
   // a 4th day before 20 km, keeping the long run's distance
-  const add = log.findIndex((l, i) => i > 5 && l.kind === "add-day");
+  const add = log.findIndex((l, i) => i > 10 && l.kind === "add-day");
   assert.ok(log[add].total >= 20 && log[add - 1].total < 20);
   assert.equal(log[add].runs.split(" ").length, 4);
   assert.equal(log[add - 1].runs.match(/:([\d.]+)L/)[1], log[add].runs.match(/:([\d.]+)L/)[1]);
 });
 
 test("long run day chosen on an existing running day", () => {
-  const log = simulate(6, 6);
-  assert.equal(log[5].runs, "2:3 4:3 6:4L");
+  const log = simulate(11, 6);
+  assert.equal(log[10].runs, "2:3 4:3 6:4L");
 });
 
 test("no more days than maxDays", () => {
   const log = simulate(60);
   assert.ok(log.every((l) => l.runs.split(" ").length <= 5));
-  assert.ok(log.at(-1).total > 1000); // just under 10% a week adds up
+  assert.ok(log.at(-1).total > 100);
 });
 
 test("template uses what was run, missed runs as planned", () => {
@@ -94,8 +98,9 @@ test("template uses what was run, missed runs as planned", () => {
 
 test("10% warning, but a single step is always fine", () => {
   const s = createState().settings;
-  assert.equal(increaseCheck(5, 6, s).over, false); // +20%, but only one step
-  assert.equal(increaseCheck(5, 6.5, s).over, true);
+  assert.equal(increaseCheck(3, 3.5, s).over, false); // +17%, but only one step
+  assert.equal(increaseCheck(5, 6, s).over, true);
+  assert.equal(increaseCheck(10, 11, s).over, false); // exactly 10% is fine
   assert.equal(increaseCheck(30, 33, s).over, false);
   assert.equal(increaseCheck(30, 33.5, s).over, true);
   assert.equal(increaseCheck(30, 33.5, s).pct, 12);
@@ -147,5 +152,8 @@ test("backup round trip and validation", () => {
   assert.equal(readBackup("nope"), null);
   const bad = migrate({ version: 1, runs: [{ id: "x", date: "2026-02-30", planned: 3 }, { id: "y", date: MON, planned: -1 }], settings: { step: 99 } });
   assert.deepEqual(bad.runs, []);
-  assert.equal(bad.settings.step, 1);
+  assert.equal(bad.settings.step, 0.5);
+  // the old 1 km default step becomes 0.5 km; a step chosen later stays
+  assert.equal(migrate({ version: 1, runs: [], settings: { step: 1 } }).settings.step, 0.5);
+  assert.equal(migrate({ version: 1, settingsRev: 2, runs: [], settings: { step: 1 } }).settings.step, 1);
 });

@@ -3,7 +3,7 @@
 import { WEEK_ORDER, addDays, dayInWeek, isDateKey, weekPos, weekStart, weekday } from "./dates.js";
 
 export const DEFAULT_SETTINGS = {
-  step: 1, // smallest weekly increase a suggestion makes (and never warned about)
+  step: 0.5, // suggestions add km in steps of this size (at least one a week, never warned about)
   maxIncrease: 10, // % week over week before the planner warns
   addDayEvery: 10, // a new running day is suggested before the week reaches each multiple of this (10, 20, 30 km…)
   maxDays: 5, // no more running days than this are suggested
@@ -21,7 +21,7 @@ export const MILESTONE_STEP = 10;
  * long: the week's long run.
  */
 export function createState() {
-  return { version: 1, runs: [], settings: { ...DEFAULT_SETTINGS, startDays: [...DEFAULT_SETTINGS.startDays] }, longRunDay: null };
+  return { version: 1, settingsRev: 2, runs: [], settings: { ...DEFAULT_SETTINGS, startDays: [...DEFAULT_SETTINGS.startDays] }, longRunDay: null };
 }
 
 export const round1 = (x) => Math.round(x * 10) / 10;
@@ -79,12 +79,12 @@ export function baseline(runs, monday) {
 export const increaseLimit = (baseTotal, settings) => Math.max((baseTotal * settings.maxIncrease) / 100, settings.step);
 
 /**
- * How much a suggested week grows: as much as possible while staying just under the % limit
- * (in 0.1 km), but at least `step`, so small weeks still move on.
+ * How much a suggested week grows: steps of `step` km are added while the week stays within the
+ * % limit (10 km: 10.5 is +5%, 11 is +10%, 11.5 would be +15%, so +1 km). Always at least one step.
  */
 export function weeklyIncrease(baseTotal, settings) {
-  const underLimit = Math.ceil(((baseTotal * settings.maxIncrease) / 100) * 10 - 1e-9) / 10 - 0.1;
-  return round1(Math.max(settings.step, underLimit));
+  const steps = Math.floor((baseTotal * settings.maxIncrease) / 100 / settings.step + 1e-9);
+  return round1(Math.max(1, steps) * settings.step);
 }
 
 /** Compares a planned week with its baseline. `pct` is null without a baseline. */
@@ -133,9 +133,9 @@ function spread(items, total) {
 /**
  * Suggests the runs for the week starting `monday`, from the last running week:
  * - start: no runs yet, so a first week of easy runs.
- * - increase: the week grows by `weeklyIncrease`, just under the % limit. Without a long run, the
- *   shortest run gets all of it. With one, the long run takes what keeps it within `longShare` of
- *   the week and the rest evens out the other runs, shortest first.
+ * - increase: the week grows by `weeklyIncrease`, steps of `step` km up to the % limit. Each step
+ *   goes to the shortest run, so the runs grow evenly; with a long run, to the long run while it
+ *   stays within `longShare` of the week.
  * - add-day: before the week reaches the next multiple of `addDayEvery` km, one more running day.
  *   The week's km (plus the increase) are spread over the runs. The first time, a long run day is chosen
  *   (`longDay`), which gets the extra; once there is a long run, it keeps its distance.
@@ -176,22 +176,15 @@ export function suggestWeek(runs, monday, settings, longDay = null) {
     return { kind: "add-day", runs: tpl.sort(posOrder), from, total: sum(tpl.map((r) => r.km)), ...(hasLong ? {} : { longDay: day }) };
   }
 
-  const inc = round1(total - from);
-  if (!hasLong) {
-    const pick = shortest(tpl);
-    pick.km = round1(pick.km + inc);
-  } else {
-    const long = longOf();
-    const easy = tpl.filter((r) => r !== long);
-    const toLong = easy.length ? Math.min(inc, Math.max(0, Math.floor(((total * s.longShare) / 100 - long.km) * 10 + 1e-9) / 10)) : inc;
-    long.km = round1(long.km + toLong);
-    // The rest in half kilometres to whichever other run is shortest, so they even out.
-    for (let left = round1(inc - toLong); left > 1e-9;) {
-      const add = Math.min(0.5, left);
-      const r = shortest(easy);
-      r.km = round1(r.km + add);
-      left = round1(left - add);
-    }
+  // One step at a time: to the long run while it stays within its share of the week,
+  // otherwise to whichever other run is shortest, so the runs grow evenly.
+  const long = longOf();
+  const easy = tpl.filter((r) => r !== long);
+  for (let left = round1(total - from); left > 1e-9;) {
+    const add = Math.min(s.step, left);
+    const r = long && (!easy.length || long.km + add <= (total * s.longShare) / 100 + 1e-9) ? long : shortest(easy);
+    r.km = round1(r.km + add);
+    left = round1(left - add);
   }
   for (const r of tpl) if (r.km > r.from) r.change = "up";
   return { kind: "increase", runs: tpl.sort(posOrder), from, total };
@@ -299,7 +292,10 @@ export function migrate(data) {
   const seen = new Set();
   const runs = data.runs.map(cleanRun).filter((r) => r && !seen.has(r.id) && seen.add(r.id));
   const longRunDay = Number.isInteger(data.longRunDay) && data.longRunDay >= 0 && data.longRunDay <= 6 ? data.longRunDay : null;
-  return { version: 1, runs, settings: cleanSettings(data.settings), longRunDay };
+  const settings = cleanSettings(data.settings);
+  // Before settings revision 2 the default step was 1 km; the new default is 0.5 km.
+  if (data.settingsRev !== 2 && settings.step === 1) settings.step = DEFAULT_SETTINGS.step;
+  return { version: 1, settingsRev: 2, runs, settings, longRunDay };
 }
 
 export const makeBackup = (state) => ({ app: "meilenmaxxen", exported: new Date().toISOString(), ...state });
