@@ -17,7 +17,7 @@ All of these numbers can be changed in Settings.
 - **Today:** this week's kilometres against the plan, today's run with a log form (pre-filled with the planned distance, so 2.5 planned → type 2.7), runs from this and last week that aren't logged yet, and runs that weren't planned.
 - **Plan:** open any week. An empty week shows the suggested plan (built from your last week) as a week preview; use it or copy last week as is. Then change kilometres (− / + or type), move runs to another day, mark the long run (★), add runs, or remove them (with a warning).
 - **Calendar:** a month view of run, planned, long and missed runs with their kilometres. Tap a day to log, move, delete or add a run.
-- **Progress:** weekly kilometres as columns (what's still planned this week drawn dashed), tap a week for its numbers. Totals, best week.
+- **Progress:** weekly kilometres as columns (12 weeks and 6 months start at the current week; All shows your whole history) (what's still planned this week drawn dashed), tap a week for its numbers. Totals, best week.
 - **Milestones:** a 10 km week, then 20, 30… with the week you first reached each one.
 - **Streak:** weeks in a row with more kilometres than the week before. This week joins as soon as you beat last week.
 - **Export / Import:** a JSON file of all runs and settings.

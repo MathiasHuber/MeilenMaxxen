@@ -425,8 +425,13 @@ function progressView() {
   const today = todayKey();
   const thisWeek = weekStart(today);
   const lastPlanned = state.runs.reduce((w, r) => (weekStart(r.date) > w ? weekStart(r.date) : w), thisWeek);
-  const all = weeklySeries(state.runs, lastPlanned);
-  const series = ui.chartRange ? all.slice(-ui.chartRange) : all;
+  // 12 weeks / 6 months start at this week, so it stays in view however far ahead you've planned.
+  const series = ui.chartRange
+    ? Array.from({ length: ui.chartRange }, (_, i) => {
+      const week = addDays(thisWeek, 7 * i);
+      return { week, actual: actualTotal(state.runs, week), planned: plannedTotal(state.runs, week) };
+    })
+    : weeklySeries(state.runs, lastPlanned);
   const ms = milestones(state.runs, today);
   const streak = streakWeeks(state.runs, today);
   const total = round1(state.runs.reduce((a, r) => a + (r.actual ?? 0), 0));
