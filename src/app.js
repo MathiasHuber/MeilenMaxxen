@@ -1,7 +1,7 @@
 import {
   createState, migrate, round1, runKm, isDone, isMissed, runsInWeek, runsOn, actualTotal, plannedTotal, template,
   baseline, increaseCheck, suggestWeek, runsFromItems, bestFreeDay, defaultLongDay, weeklySeries, streakWeeks, milestones,
-  moveRun, deleteRun, updateRun, setLong, makeBackup, readBackup, MILESTONE_STEP,
+  moveRun, deleteRun, updateRun, setLong, makeBackup, readBackup, planAhead, futurePlanned, MILESTONE_STEP,
 } from "./mileage.js";
 import {
   WEEKDAY_NAMES, WEEKDAY_LONG, WEEK_ORDER, todayKey, toKey, fromKey, addDays, weekStart, weekday, dayInWeek, isDateKey,
@@ -14,6 +14,7 @@ let state = load();
 let view = "today";
 const ui = {
   planWeek: null, // Monday of the week open in the planner
+  aheadWeeks: 12, // how many weeks "Plan ahead" plans
   longPick: null, // long run day picked in a suggestion
   calMonth: todayKey().slice(0, 7),
   calSelected: null,
@@ -354,7 +355,38 @@ function planView() {
     ${runs.length ? `<div class="card">${runs.map((r) => planRunRow(r, monday, today)).join("")}</div>` : past ? `<p class="muted small">No runs this week.</p>` : ""}
     <button class="btn block" data-action="plan-add" data-week="${monday}">+ Add a run</button>
     ${replace}
-    <p class="small muted">★ marks the long run. Use the day menu to move a run.</p>`;
+    <p class="small muted">★ marks the long run. Use the day menu to move a run.</p>
+    ${aheadCard()}
+    <details class="card">
+      <summary>Suggestion settings</summary>
+      ${progressionFields()}
+    </details>`;
+}
+
+/** Plans several weeks at once from the suggestions, and clears what's planned after this week. */
+function aheadCard() {
+  const today = todayKey();
+  const thisWeek = weekStart(today);
+  const p = planAhead(state.runs, today, ui.aheadWeeks, state.settings, state.longRunDay, newId);
+  const start = plannedTotal(state.runs, thisWeek);
+  const peak = p.weeks.reduce((best, w) => (w.total >= best.total ? w : best), p.weeks[0]);
+  const pct = start ? Math.round(((peak.total - start) / start) * 100) : null;
+  const series = [{ week: thisWeek, actual: actualTotal(state.runs, thisWeek), planned: start }, ...p.weeks.map((w) => ({ week: w.week, actual: 0, planned: w.total }))];
+  const future = futurePlanned(state.runs, today).length;
+  const longNote = state.longRunDay == null && p.longDay != null
+    ? `<p class="small muted">A long run day gets picked on the way: ${esc(WEEKDAY_LONG[p.longDay])}. Change it in the settings below.</p>` : "";
+  return `<h2>Plan ahead</h2>
+    <div class="card">
+      <label class="field"><span>Weeks to plan</span><input type="text" inputmode="numeric" data-input="ahead-weeks" value="${ui.aheadWeeks}" aria-label="Weeks to plan"></label>
+      <p>From <strong>${km(start)}</strong> this week to a peak of <strong>${km(peak.total)}</strong> in the week of ${esc(shortDate(peak.week))}${pct != null ? ` <span class="up">(+${pct}%)</span>` : ""}.</p>
+      ${weeklyChart(series, thisWeek, true)}
+      ${longNote}
+      <div class="row wrap">
+        <button class="btn primary" data-action="ahead-plan">Plan ${ui.aheadWeeks} week${ui.aheadWeeks === 1 ? "" : "s"}</button>
+        ${future ? `<button class="btn danger" data-action="clear-future">Remove all runs after this week</button>` : ""}
+      </div>
+      <p class="small muted">Planning starts next week; this week stays as it is.${future ? ` The ${runs(future)} planned after this week get replaced.` : ""}</p>
+    </div>`;
 }
 
 /**
@@ -382,7 +414,7 @@ function niceStep(max) {
 }
 
 /** Weekly kilometres as columns: run (filled) and, for this and coming weeks, the planned rest (dashed). */
-function weeklyChart(series, thisWeek) {
+function weeklyChart(series, thisWeek, labelPeak = false) {
   if (series.length < 2) return `<p class="muted small">Your weekly kilometres show here once you've run for two weeks.</p>`;
   const W = 340, H = 190, L = 32, R = 8, T = 18, B = 24;
   const max = Math.max(...series.map((w) => Math.max(w.actual, w.week >= thisWeek ? w.planned : 0)), 1);
@@ -409,12 +441,14 @@ function weeklyChart(series, thisWeek) {
     return `${w.week === sel ? `<rect class="sel" x="${L + i * band}" y="${T - 6}" width="${band}" height="${y(0) - T + 6}" rx="4"/>` : ""}${plan}${col}
       <rect class="hit" data-action="chart-sel" data-week="${w.week}" x="${L + i * band}" y="${T - 6}" width="${band}" height="${H - T}"><title>${esc(label)}</title></rect>`;
   });
-  // Direct label on the latest week with kilometres run.
-  const lastIdx = series.map((w) => w.actual > 0).lastIndexOf(true);
+  // Direct label on the latest week with kilometres run, or on the peak of a plan.
+  const planned = (w) => (w.week >= thisWeek ? Math.max(w.actual, w.planned) : w.actual);
+  const lastIdx = labelPeak
+    ? series.reduce((best, w, i) => (planned(w) >= planned(series[best]) ? i : best), 0)
+    : series.map((w) => w.actual > 0).lastIndexOf(true);
   const lx = L + lastIdx * band + band / 2;
   const last = series[lastIdx];
-  const labelTop = last && last.week >= thisWeek ? Math.max(last.actual, last.planned) : last?.actual;
-  const value = lastIdx >= 0 ? `<text class="value" x="${lx}" y="${y(labelTop) - 5}" text-anchor="${lx > W - 24 ? "end" : "middle"}">${num(series[lastIdx].actual)}</text>` : "";
+  const value = lastIdx >= 0 ? `<text class="value" x="${lx}" y="${y(planned(last)) - 5}" text-anchor="${lx > W - 24 ? "end" : "middle"}">${num(labelPeak ? planned(last) : last.actual)}</text>` : "";
   const summary = `Weekly kilometres from ${num(series[0].actual)} to ${num(series.at(-1).actual)} km`;
   return `<svg class="chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(summary)}">
     ${grid.join("")}${cols.join("")}${value}
@@ -481,10 +515,13 @@ const SETTING_FIELDS = [
   ["addDayEvery", "New running day every (km)", "A new day is suggested before your week reaches 10, 20, 30… km.", 2, 100],
   ["maxDays", "Most running days a week", "", 2, 7],
   ["longShare", "Long run at most (% of the week)", "Beyond this, increases go to your other runs.", 20, 100],
+  ["longCapKm", "Long run limit (km)", "Once the long run would pass this distance, it may only take the share below.", 5, 100],
+  ["longShareAbove", "Above the limit: long run at most (%)", "", 10, 100],
   ["startKm", "First runs (km)", "Distance of each run in your first week.", 0.5, 50],
 ];
 
-function settingsView() {
+/** The suggestion parameters, shown in Settings and in the planner. */
+function progressionFields() {
   const s = state.settings;
   const fields = SETTING_FIELDS.map(([name, label, hint, min, max]) =>
     `<label class="field"><span>${esc(label)}</span><input type="text" inputmode="decimal" name="${name}" data-input="setting" value="${esc(num(s[name]))}" data-min="${min}" data-max="${max}">
@@ -496,13 +533,15 @@ function settingsView() {
   const startDays = `<p class="small">Running days in your first week</p>
     <div class="chips" role="group" aria-label="First week days">${WEEK_ORDER.map((wd) =>
       `<button class="chip" data-action="start-day" data-wd="${wd}" aria-pressed="${s.startDays.includes(wd)}">${WEEKDAY_NAMES[wd]}</button>`).join("")}</div>`;
+  return `${fields}${longDay}${startDays}
+    <button class="btn link" data-action="reset-settings">Back to the defaults</button>`;
+}
+
+function settingsView() {
   return `<h2>Settings</h2>
     <div class="card">
       <h3>Progression</h3>
-      ${fields}
-      ${longDay}
-      ${startDays}
-      <button class="btn link" data-action="reset-settings">Back to the defaults</button>
+      ${progressionFields()}
     </div>
     <h2>Your data</h2>
     <div class="card data">
@@ -664,6 +703,18 @@ const actions = {
     if (!r) return false;
     state = setLong(state, r.id, !r.long);
   },
+  async "ahead-plan"() {
+    const today = todayKey();
+    const future = futurePlanned(state.runs, today).length;
+    if (future && !(await ask(`Replace the ${runs(future)} planned after this week with a ${ui.aheadWeeks}-week plan from the suggestions?`, "Replace plan"))) return false;
+    const p = planAhead(state.runs, today, ui.aheadWeeks, state.settings, state.longRunDay, newId);
+    state = { ...state, runs: p.runs, longRunDay: p.longDay ?? state.longRunDay };
+  },
+  async "clear-future"() {
+    const future = new Set(futurePlanned(state.runs, todayKey()));
+    if (!(await ask(`Remove all ${runs(future.size)} planned after this week? This week and logged runs stay.`, "Remove runs"))) return false;
+    state = { ...state, runs: state.runs.filter((r) => !future.has(r)) };
+  },
   "chart-range"(el) { ui.chartRange = Number(el.dataset.n); },
   "chart-sel"(el) { ui.chartSel = el.dataset.week; },
   "start-day"(el) {
@@ -718,6 +769,10 @@ document.addEventListener("change", async (e) => {
     const [min, max] = [Number(t.dataset.min), Number(t.dataset.max)];
     if (n == null || n < min || n > max) return render();
     state = { ...state, settings: { ...state.settings, [t.name]: t.name === "maxDays" ? Math.round(n) : n } };
+  } else if (input === "ahead-weeks") {
+    const n = Math.round(Number(t.value));
+    if (n >= 1 && n <= 52) ui.aheadWeeks = n;
+    return render();
   } else if (input === "long-day") {
     state = { ...state, longRunDay: t.value === "" ? null : Number(t.value) };
   } else {

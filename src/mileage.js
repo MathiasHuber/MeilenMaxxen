@@ -8,6 +8,8 @@ export const DEFAULT_SETTINGS = {
   addDayEvery: 10, // a new running day is suggested before the week reaches each multiple of this (10, 20, 30 km…)
   maxDays: 5, // no more running days than this are suggested
   longShare: 50, // % of the week the long run may take before increases go to the other runs
+  longCapKm: 28, // once the long run would pass this distance…
+  longShareAbove: 30, // …it may only take this % of the week
   startKm: 2.5, // first week: runs of this distance
   startDays: [2, 6], // first week: Tuesday and Saturday
 };
@@ -135,7 +137,7 @@ function spread(items, total) {
  * - start: no runs yet, so a first week of easy runs.
  * - increase: the week grows by `weeklyIncrease`, steps of `step` km up to the % limit. Each step
  *   goes to the shortest run, so the runs grow evenly; with a long run, to the long run while it
- *   stays within `longShare` of the week.
+ *   stays within `longShare` of the week (`longShareAbove` once it would pass `longCapKm`).
  * - add-day: before the week reaches the next multiple of `addDayEvery` km, one more running day.
  *   The week's km (plus the increase) are spread over the runs. The first time, a long run day is chosen
  *   (`longDay`), which gets the extra; once there is a long run, it keeps its distance.
@@ -182,12 +184,38 @@ export function suggestWeek(runs, monday, settings, longDay = null) {
   const easy = tpl.filter((r) => r !== long);
   for (let left = round1(total - from); left > 1e-9;) {
     const add = Math.min(s.step, left);
-    const r = long && (!easy.length || long.km + add <= (total * s.longShare) / 100 + 1e-9) ? long : shortest(easy);
+    const share = long && long.km + add > s.longCapKm + 1e-9 ? s.longShareAbove : s.longShare;
+    const r = long && (!easy.length || long.km + add <= (total * share) / 100 + 1e-9) ? long : shortest(easy);
     r.km = round1(r.km + add);
     left = round1(left - add);
   }
   for (const r of tpl) if (r.km > r.from) r.change = "up";
   return { kind: "increase", runs: tpl.sort(posOrder), from, total };
+}
+
+/** Planned runs that aren't logged, from the week after `today`'s on. */
+export const futurePlanned = (runs, today) => {
+  const next = addDays(weekStart(today), 7);
+  return runs.filter((r) => r.date >= next && !isDone(r));
+};
+
+/**
+ * Plans `weeks` weeks from the week after `today`'s, each from the suggestion for the week before.
+ * Planned runs after this week are replaced. `longDay` is used if a long run day has to be chosen.
+ * Returns { runs: all runs afterwards, weeks: [{ week, total, kind }], longDay }.
+ */
+export function planAhead(runs, today, weeks, settings, longDay, newId) {
+  const drop = new Set(futurePlanned(runs, today));
+  let out = runs.filter((r) => !drop.has(r));
+  const summary = [];
+  let chosen = longDay;
+  for (let i = 0, w = addDays(weekStart(today), 7); i < weeks; i++, w = addDays(w, 7)) {
+    const s = suggestWeek(out, w, settings, chosen);
+    if (s.longDay != null) chosen = s.longDay;
+    out = [...out, ...runsFromItems(s.runs, w, newId)];
+    summary.push({ week: w, total: s.total, kind: s.kind });
+  }
+  return { runs: out, weeks: summary, longDay: chosen };
 }
 
 /** Runs for a week from [{ wd, km, long }] items. */
@@ -281,6 +309,8 @@ function cleanSettings(s) {
     addDayEvery: num(s?.addDayEvery, 2, 100, d.addDayEvery),
     maxDays: Math.round(num(s?.maxDays, 2, 7, d.maxDays)),
     longShare: num(s?.longShare, 20, 100, d.longShare),
+    longCapKm: num(s?.longCapKm, 5, 100, d.longCapKm),
+    longShareAbove: num(s?.longShareAbove, 10, 100, d.longShareAbove),
     startKm: num(s?.startKm, 0.5, 50, d.startKm),
     startDays: days?.length ? days : [...d.startDays],
   };

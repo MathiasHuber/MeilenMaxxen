@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   createState, suggestWeek, runsFromItems, template, baseline, increaseCheck, streakWeeks, milestones,
-  bestFreeDay, weeklySeries, weeklyIncrease, setLong, migrate, readBackup, makeBackup, plannedTotal, actualTotal,
+  bestFreeDay, weeklySeries, weeklyIncrease, planAhead, futurePlanned, setLong, migrate, readBackup, makeBackup, plannedTotal, actualTotal,
 } from "../src/mileage.js";
 import { addDays } from "../src/dates.js";
 
@@ -77,6 +77,27 @@ test("the long run takes increases up to its share, the rest evens out the other
   assert.ok(log[add].total >= 20 && log[add - 1].total < 20);
   assert.equal(log[add].runs.split(" ").length, 4);
   assert.equal(log[add - 1].runs.match(/:([\d.]+)L/)[1], log[add].runs.match(/:([\d.]+)L/)[1]);
+});
+
+test("past 28 km the long run only takes 30% of the week", () => {
+  const log = simulate(50);
+  const longs = log.slice(10).map((l) => [Number(l.runs.match(/:([\d.]+)L/)[1]), l.total]);
+  assert.ok(longs.some(([long]) => long > 28), "reaches the cap");
+  for (const [long, total] of longs) assert.ok(long <= 28 || long <= total * 0.3 + 1e-9, `${long} of ${total}`);
+});
+
+test("plan ahead: weeks after this one from the suggestions, replacing what was planned", () => {
+  const today = addDays(MON, 2);
+  const runs = [run(MON, 2.5, 2.5), run(addDays(MON, 4), 2.5), run(addDays(MON, 9), 8), run(addDays(MON, 30), 3)];
+  const s = createState().settings;
+  const out = planAhead(runs, today, 12, s, null, id);
+  assert.equal(out.weeks.length, 12);
+  assert.equal(out.weeks[0].week, addDays(MON, 7));
+  assert.deepEqual(out.weeks.slice(0, 3).map((w) => w.total), [5.5, 6, 6.5]);
+  assert.ok(!out.runs.some((r) => r.planned === 8)); // the old plan after this week is gone
+  assert.equal(out.runs.filter((r) => r.date < addDays(MON, 7)).length, 2); // this week stays
+  assert.equal(futurePlanned(out.runs, today).length, 9 * 2 + 3 * 3); // a third day from 10 km
+  assert.deepEqual(futurePlanned(runs, today).map((r) => r.planned), [8, 3]);
 });
 
 test("long run day chosen on an existing running day", () => {
