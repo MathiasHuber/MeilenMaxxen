@@ -3,7 +3,7 @@
 import { WEEK_ORDER, addDays, dayInWeek, isDateKey, weekPos, weekStart, weekday } from "./dates.js";
 
 export const DEFAULT_SETTINGS = {
-  step: 1, // km added per week by a suggestion
+  step: 1, // smallest weekly increase a suggestion makes (and never warned about)
   maxIncrease: 10, // % week over week before the planner warns
   addDayEvery: 10, // a new running day is suggested before the week reaches each multiple of this (10, 20, 30 km…)
   maxDays: 5, // no more running days than this are suggested
@@ -78,6 +78,15 @@ export function baseline(runs, monday) {
 /** The most a week may grow before the planner warns: the % limit, but never less than one step. */
 export const increaseLimit = (baseTotal, settings) => Math.max((baseTotal * settings.maxIncrease) / 100, settings.step);
 
+/**
+ * How much a suggested week grows: as much as possible while staying just under the % limit
+ * (in 0.1 km), but at least `step`, so small weeks still move on.
+ */
+export function weeklyIncrease(baseTotal, settings) {
+  const underLimit = Math.ceil(((baseTotal * settings.maxIncrease) / 100) * 10 - 1e-9) / 10 - 0.1;
+  return round1(Math.max(settings.step, underLimit));
+}
+
 /** Compares a planned week with its baseline. `pct` is null without a baseline. */
 export function increaseCheck(baseTotal, total, settings) {
   if (!baseTotal) return { over: false, pct: null, diff: total };
@@ -124,10 +133,11 @@ function spread(items, total) {
 /**
  * Suggests the runs for the week starting `monday`, from the last running week:
  * - start: no runs yet, so a first week of easy runs.
- * - increase: one run gets `step` km more. Without a long run, the shortest run; with one,
- *   the long run while it stays within `longShare` of the week, otherwise the shortest other run.
+ * - increase: the week grows by `weeklyIncrease`, just under the % limit. Without a long run, the
+ *   shortest run gets all of it. With one, the long run takes what keeps it within `longShare` of
+ *   the week and the rest evens out the other runs, shortest first.
  * - add-day: before the week reaches the next multiple of `addDayEvery` km, one more running day.
- *   The week's km (plus a step) are spread over the runs. The first time, a long run day is chosen
+ *   The week's km (plus the increase) are spread over the runs. The first time, a long run day is chosen
  *   (`longDay`), which gets the extra; once there is a long run, it keeps its distance.
  * Returns { kind, runs: [{ wd, km, long, change?: "up" | "new" }], from, total, longDay? }.
  */
@@ -140,7 +150,7 @@ export function suggestWeek(runs, monday, settings, longDay = null) {
     return { kind: "start", runs: out, from: 0, total: sum(out.map((r) => r.km)) };
   }
   const from = sum(tpl.map((r) => r.km));
-  const total = round1(from + s.step);
+  const total = round1(from + weeklyIncrease(from, s));
   const target = Math.min(s.maxDays, 7, 2 + Math.floor((total + 1e-9) / s.addDayEvery));
   const usedDays = new Set(tpl.map((r) => r.wd));
   const hasLong = tpl.some((r) => r.long);
@@ -166,16 +176,24 @@ export function suggestWeek(runs, monday, settings, longDay = null) {
     return { kind: "add-day", runs: tpl.sort(posOrder), from, total: sum(tpl.map((r) => r.km)), ...(hasLong ? {} : { longDay: day }) };
   }
 
-  let pick;
+  const inc = round1(total - from);
   if (!hasLong) {
-    pick = shortest(tpl);
+    const pick = shortest(tpl);
+    pick.km = round1(pick.km + inc);
   } else {
     const long = longOf();
     const easy = tpl.filter((r) => r !== long);
-    pick = !easy.length || (long.km + s.step) / total <= s.longShare / 100 + 1e-9 ? long : shortest(easy);
+    const toLong = easy.length ? Math.min(inc, Math.max(0, Math.floor(((total * s.longShare) / 100 - long.km) * 10 + 1e-9) / 10)) : inc;
+    long.km = round1(long.km + toLong);
+    // The rest in half kilometres to whichever other run is shortest, so they even out.
+    for (let left = round1(inc - toLong); left > 1e-9;) {
+      const add = Math.min(0.5, left);
+      const r = shortest(easy);
+      r.km = round1(r.km + add);
+      left = round1(left - add);
+    }
   }
-  pick.km = round1(pick.km + s.step);
-  pick.change = "up";
+  for (const r of tpl) if (r.km > r.from) r.change = "up";
   return { kind: "increase", runs: tpl.sort(posOrder), from, total };
 }
 

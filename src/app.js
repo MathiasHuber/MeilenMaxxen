@@ -268,10 +268,12 @@ function suggestionCard(monday) {
   const step = state.settings.step;
   let text;
   if (s.kind === "start") {
-    text = `<strong>Start easy:</strong> ${s.runs.length} runs of ${km(state.settings.startKm)}. Each week after that, one run gets ${km(step)} longer.`;
+    text = `<strong>Start easy:</strong> ${s.runs.length} runs of ${km(state.settings.startKm)}. After that your week grows by just under ${state.settings.maxIncrease}% (at least ${km(step)}).`;
   } else if (s.kind === "increase") {
-    const up = s.runs.find((r) => r.change === "up");
-    text = `<strong>Add ${km(step)} to your ${esc(WEEKDAY_LONG[up.wd])} ${up.long ? "long run" : "run"}</strong>: ${num(up.from)} → ${km(up.km)}. That makes ${km(s.total)} this week.`;
+    const ups = s.runs.filter((r) => r.change === "up");
+    const inc = round1(s.total - s.from);
+    const runName = (r) => `${WEEKDAY_LONG[r.wd]}${r.long ? " (long run)" : ""}`;
+    text = `<strong>Add ${km(inc)} (+${(Math.floor((inc / s.from) * 1000) / 10).toLocaleString(undefined, { maximumFractionDigits: 1 })}%)</strong>, ${ups.length === 1 ? `all on your ${esc(runName(ups[0]))} run` : "spread over your runs"}: ${ups.map((r) => `${esc(runName(r))} ${num(r.from)} → ${km(r.km)}`).join(", ")}. That makes ${km(s.total)} this week.`;
   } else {
     const added = s.runs.find((r) => r.change === "new");
     const count = s.runs.length;
@@ -474,7 +476,7 @@ function progressView() {
 // ---------- settings ----------
 
 const SETTING_FIELDS = [
-  ["step", "Weekly increase (km)", "One run gets this much longer each week.", 0.1, 10],
+  ["step", "Smallest weekly increase (km)", "Suggestions grow your week by just under the warning limit, but at least this much.", 0.1, 10],
   ["maxIncrease", "Warn above (% per week)", "Plans that grow faster than this get a warning. One weekly increase is always fine.", 1, 100],
   ["addDayEvery", "New running day every (km)", "A new day is suggested before your week reaches 10, 20, 30… km.", 2, 100],
   ["maxDays", "Most running days a week", "", 2, 7],

@@ -5,10 +5,10 @@ A small, offline-first running planner that builds your weekly kilometres step b
 ## How the progression works
 
 - **First week:** two easy runs of 2.5 km (Tuesday and Saturday by default).
-- **Every week:** one run gets 1 km longer. Without a long run, it's the shortest run, so the runs grow evenly: 2.5/2.5 → 3.5/2.5 → 3.5/3.5 → …
+- **Every week:** the week grows by just under 10% (as much as fits in 0.1 km steps without going over), but at least 1 km, so small weeks still move on. Without a long run, the shortest run gets it all, so the runs grow evenly: 2.5/2.5 → 3.5/2.5 → 3.5/3.5 → …
 - **A new running day before each 10 km:** when next week would reach 10 km (then 20, 30…), the app suggests another running day instead. The week's kilometres are spread over one more run, so each run gets easier.
-- **Long run:** the first time a day is added, you pick your long run day. From then on most increases go to the long run, while it stays at most 50% of the week; the other increases go to your shortest other run. When more days are added later, the long run keeps its distance.
-- **The 10% rule:** a plan that grows more than 10% over your last running week gets a warning (and a confirmation the moment an edit crosses the line). You can still plan it. One weekly step (1 km) is always fine, so the early weeks don't warn.
+- **Long run:** the first time a day is added, you pick your long run day. From then on the long run takes as much of each increase as keeps it at most 50% of the week; the rest evens out your other runs. When more days are added later, the long run keeps its distance.
+- **The 10% rule:** a plan that grows more than 10% over your last running week gets a warning (and a confirmation the moment an edit crosses the line). You can still plan it. The smallest weekly increase (1 km) is always fine, so the early weeks don't warn; the suggestions themselves never warn.
 
 All of these numbers can be changed in Settings.
 

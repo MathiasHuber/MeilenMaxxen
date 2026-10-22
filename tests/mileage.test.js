@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   createState, suggestWeek, runsFromItems, template, baseline, increaseCheck, streakWeeks, milestones,
-  bestFreeDay, weeklySeries, setLong, migrate, readBackup, makeBackup, plannedTotal, actualTotal,
+  bestFreeDay, weeklySeries, weeklyIncrease, setLong, migrate, readBackup, makeBackup, plannedTotal, actualTotal,
 } from "../src/mileage.js";
 import { addDays } from "../src/dates.js";
 
@@ -47,15 +47,30 @@ test("two runs grow one at a time, a day is added before 10 km with a long run",
   assert.deepEqual(log.map((l) => l.total), [5, 6, 7, 8, 9, 10, 11, 12]);
 });
 
-test("the long run gets most of the increases but stays within its share", () => {
+test("weeks grow by just under 10%, but at least one step", () => {
+  const s = createState().settings;
+  assert.equal(weeklyIncrease(5, s), 1);
+  assert.equal(weeklyIncrease(13.4, s), 1.3);
+  assert.equal(weeklyIncrease(30, s), 2.9);
+  assert.equal(weeklyIncrease(31, s), 3);
+  const log = simulate(30);
+  for (let i = 1; i < log.length; i++) {
+    assert.equal(increaseCheck(log[i - 1].total, log[i].total, s).over, false, `week ${i}`);
+    assert.ok(log[i].total - log[i - 1].total >= 1 - 1e-9);
+  }
+  assert.equal(log[8].total, 13.1);
+});
+
+test("the long run takes increases up to its share, the rest evens out the other runs", () => {
   const log = simulate(20);
   for (const l of log.slice(6)) {
     const long = Number(l.runs.match(/:([\d.]+)L/)[1]);
     assert.ok(long / l.total <= 0.5 + 1e-9, `${l.runs}`);
   }
-  // 4th day before 20 km, keeping the long run's distance
+  assert.equal(log[8].runs, "2:3.5 6:3.1 0:6.5L"); // 12 km + 1.1: long run to 6.5 (half of 13.1), 0.6 to the others
+  // a 4th day before 20 km, keeping the long run's distance
   const add = log.findIndex((l, i) => i > 5 && l.kind === "add-day");
-  assert.equal(log[add].total, 20);
+  assert.ok(log[add].total >= 20 && log[add - 1].total < 20);
   assert.equal(log[add].runs.split(" ").length, 4);
   assert.equal(log[add - 1].runs.match(/:([\d.]+)L/)[1], log[add].runs.match(/:([\d.]+)L/)[1]);
 });
@@ -68,7 +83,7 @@ test("long run day chosen on an existing running day", () => {
 test("no more days than maxDays", () => {
   const log = simulate(60);
   assert.ok(log.every((l) => l.runs.split(" ").length <= 5));
-  assert.equal(log.at(-1).total, 64);
+  assert.ok(log.at(-1).total > 1000); // just under 10% a week adds up
 });
 
 test("template uses what was run, missed runs as planned", () => {
