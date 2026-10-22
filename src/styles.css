@@ -263,3 +263,4 @@ textarea {
 .stone strong { font-size: 0.95rem; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .stone span { font-size: 0.65rem; color: var(--muted); }
 .stone.next { border-style: dashed; background: none; }
+.chip:disabled { opacity: 0.35; cursor: default; }

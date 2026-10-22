@@ -1,7 +1,7 @@
 import {
   createState, migrate, round1, runKm, isDone, isMissed, runsInWeek, runsOn, actualTotal, plannedTotal, template,
   baseline, increaseCheck, suggestWeek, runsFromItems, bestFreeDay, defaultLongDay, weeklySeries, streakWeeks, milestones,
-  moveRun, deleteRun, updateRun, setLong, makeBackup, readBackup, planAhead, futurePlanned, MILESTONE_STEP,
+  moveRun, deleteRun, updateRun, setLong, makeBackup, readBackup, planAhead, futurePlanned, floorHalf,
 } from "./mileage.js";
 import {
   WEEKDAY_NAMES, WEEKDAY_LONG, WEEK_ORDER, todayKey, toKey, fromKey, addDays, weekStart, weekday, dayInWeek, isDateKey,
@@ -87,7 +87,7 @@ function render() {
 
 /** Log form for a run: distance pre-filled with what was planned (or logged). */
 function logForm(r) {
-  const value = r ? r.actual ?? r.planned ?? state.settings.startKm : state.settings.startKm;
+  const value = r ? r.actual ?? r.planned ?? defaultRunKm() : defaultRunKm();
   const id = r ? r.id : "extra";
   return `<div class="log-form">
     <span class="stepper">
@@ -230,7 +230,7 @@ function dayDetail(k, today) {
     <div class="run">
       <span class="small">${future ? "Plan a run on this day" : "Add a run you did on this day"}</span>
       <div class="log-form">
-        <input class="km-input" id="add-km" inputmode="decimal" autocomplete="off" value="${esc(num(state.settings.startKm))}" aria-label="Kilometres">
+        <input class="km-input" id="add-km" inputmode="decimal" autocomplete="off" value="${esc(num(defaultRunKm()))}" aria-label="Kilometres">
         <span class="muted">km</span>
         <button class="btn" data-action="add-on-day" data-date="${k}">${future ? "Add planned run" : "Add run"}</button>
       </div>
@@ -269,7 +269,9 @@ function suggestionCard(monday) {
   const step = state.settings.step;
   let text;
   if (s.kind === "start") {
-    text = `<strong>Start easy:</strong> ${s.runs.length} runs of ${km(state.settings.startKm)}. After that your week grows in steps of ${km(step)}, as many as fit within ${state.settings.maxIncrease}%.`;
+    text = `<strong>Start easy:</strong> ${km(s.total)} over ${s.runs.length} run${s.runs.length === 1 ? "" : "s"}. After that your week grows in steps of ${km(step)}, as many as fit within ${state.settings.maxIncrease}%.`;
+  } else if (s.kind === "hold") {
+    text = `<strong>You're at your goal of ${km(state.settings.goalKm)} a week.</strong> Keep it steady: the same ${km(s.total)} as last week. Raise the goal in the suggestion settings to keep building.`;
   } else if (s.kind === "increase") {
     const ups = s.runs.filter((r) => r.change === "up");
     const inc = round1(s.total - s.from);
@@ -280,16 +282,18 @@ function suggestionCard(monday) {
     const count = s.runs.length;
     text = `<strong>Add a ${ordinal(count)} running day on ${esc(WEEKDAY_LONG[added.wd])}.</strong> Instead of another longer run, your ${km(s.total)} are spread over ${count} runs, so each one stays easy.`;
     if (s.longDay != null) {
-      const chosen = defaultLongDay(tpl, longDay);
+      const chosen = defaultLongDay(tpl, longDay, state.settings.days);
       text += `<p class="small">From now on one run a week is your <strong>long run</strong>: most of the extra kilometres go there. Pick its day:</p>
-        <div class="chips" role="group" aria-label="Long run day">${WEEK_ORDER.map((wd) =>
+        <div class="chips" role="group" aria-label="Long run day">${WEEK_ORDER.filter((wd) => state.settings.days.includes(wd)).map((wd) =>
           `<button class="chip" data-action="long-pick" data-wd="${wd}" aria-pressed="${wd === chosen}">${WEEKDAY_NAMES[wd]}</button>`).join("")}</div>`;
     }
   }
   const check = increaseCheck(baseline(state.runs, monday).total, s.total, state.settings);
+  const moves = s.moves.length
+    ? `<p class="small muted">You can't run on ${s.moves.map((m) => `${WEEKDAY_LONG[m.from]} (moved to ${WEEKDAY_LONG[m.to]})`).join(", ")}.</p>` : "";
   return `<div class="card">
     <h3>Suggested plan</h3>
-    <div>${text}</div>
+    <div>${text}</div>${moves}
     ${previewSlots(s.runs, monday)}
     ${check.over ? `<p class="notice warn small">This is more than ${state.settings.maxIncrease}% above your last week.</p>` : ""}
     <div class="row wrap">
@@ -468,7 +472,7 @@ function progressView() {
       return { week, actual: actualTotal(state.runs, week), planned: plannedTotal(state.runs, week) };
     })
     : weeklySeries(state.runs, lastPlanned);
-  const ms = milestones(state.runs, today);
+  const ms = milestones(state.runs, today, state.settings.milestoneStep);
   const streak = streakWeeks(state.runs, today);
   const total = round1(state.runs.reduce((a, r) => a + (r.actual ?? 0), 0));
   const runsDone = state.runs.filter(isDone).length;
@@ -497,7 +501,7 @@ function progressView() {
     <div class="card">
       <div class="row between"><span>Next: a <strong>${ms.next} km</strong> week</span><span class="small muted num">${km(ms.best)} / ${ms.next} km</span></div>
       <div class="bar"><span style="width:${ms.progress * 100}%"></span></div>
-      <p class="small muted">${ms.best ? `Your best week so far is ${km(ms.best)}. ` : ""}A milestone for every ${MILESTONE_STEP} km in one week.</p>
+      <p class="small muted">${ms.best ? `Your best week so far is ${km(ms.best)}. ` : ""}A milestone for every ${km(state.settings.milestoneStep)} in one week.</p>
       ${stones ? `<div class="stones">${stones}</div>` : ""}
     </div>
     <h2>Streak</h2>
@@ -509,38 +513,58 @@ function progressView() {
 
 // ---------- settings ----------
 
+/** A sensible distance for a run added by hand: an even share of the first week. */
+const defaultRunKm = () => Math.max(0.5, floorHalf(state.settings.startWeekKm / Math.max(1, state.settings.startDays.length)));
+
+const GOAL_FIELDS = [
+  ["goalKm", "Goal (km a week)", "Suggestions build up to this and then keep your week steady. Leave empty for no goal.", 0, 1000],
+  ["startWeekKm", "First week (km)", "Spread over your first week's running days.", 0.5, 200],
+];
 const SETTING_FIELDS = [
   ["step", "Increase in steps of (km)", "Suggestions add steps of this size until one more would pass the warning limit. Always at least one step.", 0.1, 10],
-  ["maxIncrease", "Warn above (% per week)", "Plans that grow faster than this get a warning. One weekly increase is always fine.", 1, 100],
+  ["maxIncrease", "Warn above (% per week)", "Plans that grow faster than this get a warning. One step is always fine.", 1, 100],
   ["addDayEvery", "New running day every (km)", "A new day is suggested before your week reaches 10, 20, 30… km.", 2, 100],
   ["maxDays", "Most running days a week", "", 2, 7],
   ["longShare", "Long run at most (% of the week)", "Beyond this, increases go to your other runs.", 20, 100],
   ["longCapKm", "Long run limit (km)", "Once the long run would pass this distance, it may only take the share below.", 5, 100],
   ["longShareAbove", "Above the limit: long run at most (%)", "", 10, 100],
-  ["startKm", "First runs (km)", "Distance of each run in your first week.", 0.5, 50],
+];
+const MILESTONE_FIELDS = [
+  ["milestoneStep", "Milestone every (km a week)", "", 1, 100],
 ];
 
 /** The suggestion parameters, shown in Settings and in the planner. */
 function progressionFields() {
   const s = state.settings;
-  const fields = SETTING_FIELDS.map(([name, label, hint, min, max]) =>
-    `<label class="field"><span>${esc(label)}</span><input type="text" inputmode="decimal" name="${name}" data-input="setting" value="${esc(num(s[name]))}" data-min="${min}" data-max="${max}">
+  const fields = (list) => list.map(([name, label, hint, min, max]) =>
+    `<label class="field"><span>${esc(label)}</span><input type="text" inputmode="decimal" name="${name}" data-input="setting" value="${name === "goalKm" && !s.goalKm ? "" : esc(num(s[name]))}" ${name === "goalKm" ? `placeholder="None"` : ""} data-min="${min}" data-max="${max}">
       ${hint ? `<span class="small muted hint">${esc(hint)}</span>` : ""}</label>`).join("");
+  const dayChips = (action, on, label, enabled = () => true) => `<div class="chips" role="group" aria-label="${esc(label)}">${WEEK_ORDER.map((wd) =>
+    `<button class="chip" data-action="${action}" data-wd="${wd}" aria-pressed="${on(wd)}" ${enabled(wd) ? "" : "disabled"}>${WEEKDAY_NAMES[wd]}</button>`).join("")}</div>`;
   const longDay = `<label class="field"><span>Long run day</span><select data-input="long-day">
       <option value="">Not chosen yet</option>
-      ${WEEK_ORDER.map((wd) => `<option value="${wd}" ${state.longRunDay === wd ? "selected" : ""}>${WEEKDAY_LONG[wd]}</option>`).join("")}
+      ${WEEK_ORDER.filter((wd) => s.days.includes(wd)).map((wd) => `<option value="${wd}" ${state.longRunDay === wd ? "selected" : ""}>${WEEKDAY_LONG[wd]}</option>`).join("")}
     </select></label>`;
-  const startDays = `<p class="small">Running days in your first week</p>
-    <div class="chips" role="group" aria-label="First week days">${WEEK_ORDER.map((wd) =>
-      `<button class="chip" data-action="start-day" data-wd="${wd}" aria-pressed="${s.startDays.includes(wd)}">${WEEKDAY_NAMES[wd]}</button>`).join("")}</div>`;
-  return `${fields}${longDay}${startDays}
+  return `<h3>Your week</h3>
+    <p class="small">Days you can run</p>
+    ${dayChips("allowed-day", (wd) => s.days.includes(wd), "Days you can run")}
+    <p class="small muted">Suggestions only put runs on these days.</p>
+    ${fields(GOAL_FIELDS)}
+    <p class="small">Running days in your first week</p>
+    ${dayChips("start-day", (wd) => s.startDays.includes(wd), "First week days", (wd) => s.days.includes(wd))}
+    ${longDay}
+    <h3>Growth</h3>
+    ${fields(SETTING_FIELDS.slice(0, 4))}
+    <h3>Long run</h3>
+    ${fields(SETTING_FIELDS.slice(4))}
+    <h3>Milestones</h3>
+    ${fields(MILESTONE_FIELDS)}
     <button class="btn link" data-action="reset-settings">Back to the defaults</button>`;
 }
 
 function settingsView() {
   return `<h2>Settings</h2>
     <div class="card">
-      <h3>Progression</h3>
       ${progressionFields()}
     </div>
     <h2>Your data</h2>
@@ -584,7 +608,7 @@ const runs = (n) => `${n} run${n === 1 ? "" : "s"}`;
 
 /** What logging a run achieved: a new milestone or a longer streak. */
 function achievements(before, today) {
-  const ms = milestones(state.runs, today);
+  const ms = milestones(state.runs, today, state.settings.milestoneStep);
   const streak = streakWeeks(state.runs, today);
   const news = ms.reached.filter((m) => !before.reached.some((b) => b.km === m.km));
   const lines = [];
@@ -613,7 +637,7 @@ const actions = {
     const value = parseKm(document.getElementById(`log-${id}`).value);
     if (value == null || value <= 0) return false;
     const today = todayKey();
-    const before = { reached: milestones(state.runs, today).reached, streak: streakWeeks(state.runs, today) };
+    const before = { reached: milestones(state.runs, today, state.settings.milestoneStep).reached, streak: streakWeeks(state.runs, today) };
     if (id === "extra") {
       const date = document.getElementById("extra-date").value;
       if (!isDateKey(date) || date > today) return false;
@@ -685,8 +709,8 @@ const actions = {
   "plan-add"(el) {
     const monday = el.dataset.week;
     const used = runsInWeek(state.runs, monday).map((r) => weekday(r.date));
-    const wd = used.length >= 7 ? 1 : bestFreeDay(used);
-    const run = { id: newId(), date: dayInWeek(monday, wd), planned: state.settings.startKm, actual: null, long: false };
+    const wd = bestFreeDay(used, state.settings.days) ?? bestFreeDay(used) ?? 1;
+    const run = { id: newId(), date: dayInWeek(monday, wd), planned: defaultRunKm(), actual: null, long: false };
     ui.planWeek = monday;
     planChange(monday, () => { state = { ...state, runs: [...state.runs, run] }; });
     return false;
@@ -722,6 +746,20 @@ const actions = {
     const days = state.settings.startDays.includes(wd) ? state.settings.startDays.filter((d) => d !== wd) : [...state.settings.startDays, wd];
     if (!days.length) return false;
     state = { ...state, settings: { ...state.settings, startDays: days } };
+  },
+  "allowed-day"(el) {
+    const wd = Number(el.dataset.wd);
+    const s = state.settings;
+    const days = s.days.includes(wd) ? s.days.filter((d) => d !== wd) : [...s.days, wd];
+    if (!days.length) return false; // keep at least one day
+    // A first-week day you can't run on any more is swapped for another free day.
+    const startDays = s.startDays.filter((d) => days.includes(d));
+    while (startDays.length < Math.min(s.startDays.length, days.length)) startDays.push(bestFreeDay(startDays, days));
+    state = {
+      ...state,
+      settings: { ...s, days, startDays },
+      longRunDay: days.includes(state.longRunDay) ? state.longRunDay : null,
+    };
   },
   async "reset-settings"() {
     if (!(await ask("Set all progression settings back to their defaults?", "Reset settings"))) return false;
@@ -765,7 +803,7 @@ document.addEventListener("change", async (e) => {
     if (!isDateKey(t.value)) return render();
     state = moveRun(state, t.dataset.id, t.value);
   } else if (input === "setting") {
-    const n = parseKm(t.value);
+    const n = t.name === "goalKm" && t.value.trim() === "" ? 0 : parseKm(t.value);
     const [min, max] = [Number(t.dataset.min), Number(t.dataset.max)];
     if (n == null || n < min || n > max) return render();
     state = { ...state, settings: { ...state.settings, [t.name]: t.name === "maxDays" ? Math.round(n) : n } };

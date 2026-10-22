@@ -100,6 +100,47 @@ test("plan ahead: weeks after this one from the suggestions, replacing what was 
   assert.deepEqual(futurePlanned(runs, today).map((r) => r.planned), [8, 3]);
 });
 
+/** Like simulate, with changed settings. */
+function simulateWith(weeks, patch, longDay = null) {
+  const state = createState();
+  Object.assign(state.settings, patch);
+  const log = [];
+  for (let i = 0; i < weeks; i++) {
+    const monday = addDays(MON, 7 * i);
+    const s = suggestWeek(state.runs, monday, state.settings, longDay);
+    log.push({ kind: s.kind, runs: kms(s), total: s.total, moves: s.moves });
+    state.runs.push(...runsFromItems(s.runs, monday, id).map((r) => ({ ...r, actual: r.planned })));
+  }
+  return log;
+}
+
+test("runs only go on days you can run", () => {
+  const days = [1, 3, 4, 6]; // not Tuesday, Friday or Sunday
+  const log = simulateWith(40, { days });
+  assert.equal(log[0].runs, "3:2.5 6:2.5"); // Tuesday from the start days is replaced by Wednesday
+  for (const l of log) for (const r of l.runs.split(" ")) assert.ok(days.includes(Number(r.split(":")[0])), l.runs);
+  assert.equal(Math.max(...log.map((l) => l.runs.split(" ").length)), 4); // no more days than you have
+  assert.match(log[10].runs, /6:4L/); // long run on Saturday: Sunday isn't possible
+});
+
+test("last week's runs on a day you can't run move to a free day", () => {
+  const runs = [run(addDays(MON, 1), 3), run(addDays(MON, 5), 3)]; // Tuesday and Saturday
+  const s = suggestWeek(runs, addDays(MON, 7), { ...createState().settings, days: [1, 3, 5, 6] });
+  assert.deepEqual(s.moves, [{ from: 2, to: 3 }]);
+  assert.equal(kms(s), "3:3.5 6:3");
+});
+
+test("the week builds up to the goal and then holds", () => {
+  const log = simulateWith(14, { goalKm: 8.2 });
+  assert.deepEqual(log.map((l) => l.total).slice(5), [7.5, 8, 8.2, 8.2, 8.2, 8.2, 8.2, 8.2, 8.2]);
+  assert.equal(log[8].kind, "hold");
+});
+
+test("first week from a weekly total", () => {
+  assert.equal(simulateWith(1, { startWeekKm: 12, startDays: [1, 3, 5] })[0].runs, "1:4 3:4 5:4");
+  assert.equal(simulateWith(1, { startWeekKm: 7 })[0].runs, "2:3.5 6:3.5");
+});
+
 test("long run day chosen on an existing running day", () => {
   const log = simulate(11, 6);
   assert.equal(log[10].runs, "2:3 4:3 6:4L");
@@ -143,6 +184,7 @@ test("milestones every 10 km of weekly mileage", () => {
   const m = milestones(runs, addDays(MON, 14));
   assert.deepEqual(m.reached.map((r) => [r.km, r.week]), [[10, addDays(MON, 7)], [20, addDays(MON, 14)]]);
   assert.equal(m.next, 30);
+  assert.deepEqual(milestones(runs, addDays(MON, 14), 5).reached.map((r) => r.km), [5, 10, 15, 20]);
   assert.equal(m.best, 21);
 });
 
@@ -177,4 +219,6 @@ test("backup round trip and validation", () => {
   // the old 1 km default step becomes 0.5 km; a step chosen later stays
   assert.equal(migrate({ version: 1, runs: [], settings: { step: 1 } }).settings.step, 0.5);
   assert.equal(migrate({ version: 1, settingsRev: 2, runs: [], settings: { step: 1 } }).settings.step, 1);
+  // km per first run (before revision 3) becomes the first week's total
+  assert.equal(migrate({ version: 1, settingsRev: 2, runs: [], settings: { startKm: 3, startDays: [1, 3, 5] } }).settings.startWeekKm, 9);
 });
